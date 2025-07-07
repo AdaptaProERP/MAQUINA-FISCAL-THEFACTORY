@@ -8,6 +8,8 @@
 // Manual     : https://github.com/AdaptaProERP/impresoras-fiscales/blob/main/%5BVE%5DManual%20de%20Protocolos%20y%20Comandos%20Venezuela%20V0805R00-1.pdf
 //              https://github.com/AdaptaProERP/MAQUINA-FISCAL-THEFACTORY/blob/main/Tfhkaif%20Espa%C3%B1ol%20Ver1.1.pdf
 //              https://github.com/AdaptaProERP/MAQUINA-FISCAL-THEFACTORY/blob/main/%5BVE%5DManual%20de%20Protocolos%20y%20Comandos%20Venezuela%20V0805R00-1.pdf
+//              https://github.com/AdaptaProERP/MAQUINA-FISCAL-THEFACTORY/blob/main/Ejemplo_Informacion_de_Impresora_Fiscal.cpp
+// JUNIO 2025 : Actualización libreria e implementación de funcionalidades para facilitar su implementación
 
 #INCLUDE "DPXBASE.CH"
 
@@ -81,6 +83,16 @@ PROCE MAIN(cCodSuc,cTipDoc,cNumero,cOption,cCmd)
      IF "GETCRE"$cCmd
         lSave:=.F.
         DpGetNumCre()
+     ENDIF
+
+     IF "GETTXT"$cCmd
+        lSave:=.F.
+        DpGetDataFile()
+     ENDIF
+
+     IF "GETDATA"$cCmd
+        lSave:=.F.
+        DpGetDataDin()
      ENDIF
 
 
@@ -206,12 +218,15 @@ PROCE MAIN(cCodSuc,cTipDoc,cNumero,cOption,cCmd)
 RETURN lRet
 
 FUNCTION TFH_INI(cPuerto)
-  LOCAL cError  :="",nError
+  LOCAL cError  :="",nError,lOpen:=.F.
 
   DEFAULT cPuerto :=oDp:cImpFisCom
 
   IF !TYPE("oTFH")="O"
+
     TDpClass():New(NIL,"oTFH")
+    oTFH:cFlag21  :="" // Cantidad enteros y decimales del Precio
+
   ENDIF
 
   oTFH:hDll     :=NIL
@@ -230,7 +245,16 @@ FUNCTION TFH_INI(cPuerto)
   oTFH:cCmd     :=cCmd
   oTFH:lError   :=.F.
   oTFH:cErrorIni:=""
+  oTFH:cFlag21  :="" // Cantidad enteros y decimales del Precio
+
+  oTFH:nPrecioEnt:=8 // cFlag21=00
+  oTFH:nPrecioDec:=2 // cFlag21=00
+  oTFH:aDataTFH  :={} // lectura de la memoria fiscal de manera dinámica
   
+  //IF Empty(oTFH:cFlag21)
+   // oTFH:DpFlag21() // LECTURA DE FLAG
+  //ENDIF
+
   FERASE(oTFH:cFileLog)
 
   IF !FILE(oTFH:cFileDll)
@@ -240,9 +264,12 @@ FUNCTION TFH_INI(cPuerto)
 
   oTFH:oFile   :=TFile():New(oTFH:cFileLog)
 
-  oDp:nTFHDll := If(oDp:nTFHDll == nil,LoadLibrary(oTFH:cFileDll),oDp:nTFHDll ) 
-  cPuerto         := If(cPuerto == nil,"COM6",cPuerto )
+  IF oDp:nTFHDll == nil
+     oDp:nTFHDll:=LoadLibrary(oTFH:cFileDll)
+     lOpen:=.T.
+  ENDIF
 
+  cPuerto     := If(cPuerto == nil,"COM6",cPuerto )
 
   IF ValType(oDp:nTFHDll)!="N" .And. oDp:nTFHDll!=0
 
@@ -250,24 +277,32 @@ FUNCTION TFH_INI(cPuerto)
 
   ELSE
 
-     nError:=DpOpenFpctrl(cPuerto)
+     IF lOpen
 
-     IF nError=0
+      nError:=DpOpenFpctrl(cPuerto)
+
+      IF nError=0
+         cError:=TFH_ERROR(nError,!oDp:lImpFisModVal,.T.)
+      ENDIF
+
+      IF nError != 1 .And. nError != 0
         cError:=TFH_ERROR(nError,!oDp:lImpFisModVal,.T.)
+      ENDIF
+
+      oTFH:cErrorIni:=cError
+
+      IF !EMPTY(cError)
+         oTFH:lError:=.T.
+         DpCloseFpctrl()
+      ELSE
+
+         oTFH:cFlag21:=DpFlag21() // Obtiene Flag21 para precios con valores enteros y decimales
+
+      ENDIF
+   
      ENDIF
 
-     IF nError != 1 .And. nError != 0
-        cError:=TFH_ERROR(nError,!oDp:lImpFisModVal,.T.)
-     ENDIF
-
-     oTFH:cErrorIni:=cError
-
-     IF !EMPTY(cError)
-        oTFH:lError:=.T.
-        DpCloseFpctrl ()
-     ENDIF
-
-     oTFH:nErrorChk:=DpCheckFprinter() 
+     oTFH:nErrorChk:=DpCheckFprinter()  
 
   ENDIF
 
@@ -361,17 +396,21 @@ RETURN cError
 */
 FUNCTION TFH_END()
 
-  DpCloseFpctrl()
+  //  3/7/2025 Innecesario DpCloseFpctrl(), ejecutado en DLL_TFHK_CLOSE
+
   oTFH:oFile:AppStr("TFH_END()"+CRLF)
 
   IF !oTFH:oFile=NIL
     oTFH:oFile:Close()
   ENDIF
 
+/*
+  05/06/2025 cerrar la DLL cuando sale del sistema o cambia de impresoa
   IF oDp:nTFHDll<>NIL
      FreeLibrary(oDp:nTFHDll)
      oDp:nTFHDll:=NIL
   ENDIF
+*/
 
 RETURN .T.
 
@@ -404,10 +443,104 @@ FUNCTION DpCheckFprinter()
 RETURN uResult
 
 /*
+// Genera data dinámica, lectura de S1,S2,S3 de manera dinámica
+*/
+FUNCTION DpGetDataDin(cFile,aCmd)
+  LOCAL cFarProc :=NIL
+  LOCAL uResult  :=NIL
+  LOCAL lStatus  :=1
+  LOCAL lError   :=1
+  LOCAL cData    :=SPACE(254)
+  LOCAL cFunction:="UploadStatusDin"
+  LOCAL I        :=0,cCmd
+
+  DEFAULT aCmd     :={"S1","S2","S3","S2E","S21"} 
+
+  oTFH:aDataTFH :={}
+
+  IF !oDp:lImpFisModVal
+
+    cFarProc:= GetProcAddress(oDp:nTFHDLL,cFunction,.T.,7,9,9,9,9) 
+
+    IF ValType(oTFH:oFile)="O"
+       oTFH:oFile:AppStr("UploadStatusDin"+CLRF)
+    ENDIF
+
+    FOR I=1 TO LEN(aCmd)
+
+       cCmd    :=aCmd[I]
+       cData   :=SPACE(254)
+       uResult := CallDLL(cFarProc,lStatus,lError,cCmd,@cData) 
+
+       oTFH:SET(cCmd,cData) // Asignacion dinamica
+
+       AADD(oTFH:aDataTFH,{cCmd,cData})
+
+       IF ValType(oTFH:oFile)="O"
+         oTFH:oFile:AppStr(cData+CRLF)
+       ENDIF
+
+    NEXT I
+
+  ENDIF
+
+  oDp:aDataTFH:=oTFH:aDataTFH
+
+RETURN cData
+
+/*
+// Obtener Datos en archivo TXT
+// https://github.com/AdaptaProERP/MAQUINA-FISCAL-THEFACTORY/blob/main/Ejemplo_Informacion_de_Impresora_Fiscal.cpp
+// Ejecuta la emisión de papel desde la impresora, escribe en archivo y genera el mismo resultado UploadStatusDin en Memoria 
+*/
+FUNCTION DpGetDataFile(cFunction,cCmd,cFile)
+  LOCAL cFarProc:=NIL
+  LOCAL uResult :=NIL
+  LOCAL lStatus :=1
+  LOCAL lError  :=1
+  LOCAL cData   :=SPACE(254)
+
+  DEFAULT cFunction:="UploadStatusCmd",;
+          cCmd     :="S1",;
+          cFile    :="thefactory_"+dtos(oDp:dFecha)+"_"+cCmd+".txt"
+
+  IF !oDp:lImpFisModVal
+    cFarProc:= GetProcAddress(oDp:nTFHDLL,cFunction,.T.,7,9,9,9,9) 
+    uResult := CallDLL(cFarProc,lStatus,lError,cCmd,cFile) 
+  ENDIF
+
+  IF !oDp:lImpFisModVal
+
+    cCmd    :="S2"
+    cFile   :="thefactory_"+dtos(oDp:dFecha)+"_"+cCmd+".txt"
+    cFarProc:=GetProcAddress(oDp:nTFHDLL,cFunction,.T.,7,9,9,9,9) 
+    uResult :=CallDLL(cFarProc,lStatus,lError,cCmd,cFile) 
+
+    cCmd    :="S3"
+    cFile   :="thefactory_"+dtos(oDp:dFecha)+"_"+cCmd+".txt"
+    cFarProc:=GetProcAddress(oDp:nTFHDLL,cFunction,.T.,7,9,9,9,9) 
+    uResult :=CallDLL(cFarProc,lStatus,lError,cCmd,cFile) 
+
+    cCmd    :="U0X" 
+    cFile   :="thefactory_"+dtos(oDp:dFecha)+"_"+cCmd+".txt"
+    cFarProc:=GetProcAddress(oDp:nTFHDLL,cFunction,.T.,7,9,9,9,9) 
+    uResult :=CallDLL(cFarProc,lStatus,lError,cCmd,cFile) 
+
+  ENDIF
+
+  IF ValType(oTFH:oFile)="O" 
+    oTFH:oFile:AppStr(cFunction+",Resp->"+CTOO(uResult,"C")+CTOO(cFile,"C")+CRLF)
+  ENDIF
+
+RETURN NIL
+
+
+
+/*
 // Devuelve el ultimo numero de factura
 */
 FUNCTION DpGetNumFav()
-    LOCAL cFunction:="UploadStatusDin",;
+    LOCAL cFunction:="UploadStatusDin"
 
     oTFH:cS1    :=DpGetData(cFunction,"S1")
     oTFH:cNumFav:=SUBS(oTFH:cS1,22,8)
@@ -418,9 +551,9 @@ FUNCTION DpGetNumFav()
 
     IF ValType(oTFH:oFile)="O"
       oTFH:oFile:AppStr(oTFH:cS1+CRLF)
-      oTFH:oFile:AppStr("#Factura"+oTFH:cNumFav+CRLF)
-      oTFH:oFile:AppStr("#Débito "+oTFH:cNumDeb+CRLF)
-      oTFH:oFile:AppStr("#Crédito"+oTFH:cNumCre+CRLF)
+      oTFH:oFile:AppStr("#Factura="+oTFH:cNumFav+CRLF)
+      oTFH:oFile:AppStr("#Débito ="+oTFH:cNumDeb+CRLF)
+      oTFH:oFile:AppStr("#Crédito="+oTFH:cNumCre+CRLF)
     ENDIF
 
 RETURN oTFH:cNumFav
@@ -429,7 +562,7 @@ RETURN oTFH:cNumFav
 // Devuelve el ultimo numero de Nota de Débito
 */
 FUNCTION DpGetNumDeb()
-    LOCAL cFunction:="UploadStatusDin",;
+    LOCAL cFunction:="UploadStatusDin"
 
     oTFH:cS1    :=DpGetData(cFunction,"S1")
     oTFH:cNumDeb:=SUBS(oTFH:cS1,35,8)
@@ -441,15 +574,13 @@ RETURN oTFH:cNumDeb
 // Devuelve el ultimo numero de Nota de Crédito
 */
 FUNCTION DpGetNumCre()
-    LOCAL cFunction:="UploadStatusDin",;
+    LOCAL cFunction:="UploadStatusDin"
 
     oTFH:cS1    :=DpGetData(cFunction,"S1")
     oTFH:cNumCre:=SUBS(oTFH:cS1,49,8)
     oDp:cTFHCRE :=oTFH:cNumDeb
 
 RETURN oTFH:cNumCre
-
-
 
 /*
 // leer valores de la impresora, comandos S1,S2
@@ -620,6 +751,14 @@ FUNCTION TFHRESERT()
     ENDIF
 
 RETURN Empty(cError)
+
+/*
+// Obtiene la Cantidad de Decimales del Precio
+*/
+FUNCTION DpFlag21()
+ 
+
+RETURN .T.
 
 // EOF
 
