@@ -9,7 +9,7 @@
 //              https://github.com/AdaptaProERP/MAQUINA-FISCAL-THEFACTORY/blob/main/Tfhkaif%20Espa%C3%B1ol%20Ver1.1.pdf
 //              https://github.com/AdaptaProERP/MAQUINA-FISCAL-THEFACTORY/blob/main/%5BVE%5DManual%20de%20Protocolos%20y%20Comandos%20Venezuela%20V0805R00-1.pdf
 //              https://github.com/AdaptaProERP/MAQUINA-FISCAL-THEFACTORY/blob/main/Ejemplo_Informacion_de_Impresora_Fiscal.cpp
-// JUNIO 2025 : Actualización libreria e implementación de funcionalidades para facilitar su implementación
+// JUNIO 2025 : Actualización libreria e implementación de funcionalidades para facilitar su  lectura del FLAG21 para los decimales de precio, tambien generar reporte ZETA de manera digital
 
 #INCLUDE "DPXBASE.CH"
 
