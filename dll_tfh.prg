@@ -13,7 +13,7 @@
 
 #INCLUDE "DPXBASE.CH"
 
-PROCE MAIN(cCodSuc,cTipDoc,cNumero,cOption,cCmd)
+PROCE MAIN(cCodSuc,cTipDoc,cNumero,cOption,cCmd,cCmdParam,cCmdParam2)
   LOCAL nStatus:=0,lError:=.F.,cError:="",nError:=0,cMsgErr:="",oTable
   LOCAL cPuerto  :=oDp:cImpFisCom,aData:={},I,lRet:=.T.,nLinErr:=0
   LOCAL cFilePag:="",nNumero,cData:="",lSave:=.F.,cFile,cMemo:="",cTipo:="SIMP" 
@@ -23,6 +23,9 @@ PROCE MAIN(cCodSuc,cTipDoc,cNumero,cOption,cCmd)
           cNumero   :=SQLGETMAX("DPDOCCLI","DOC_NUMERO","DOC_TIPDOC"+GetWhere("=",cTipDoc)),;
           cOption   :="3",;
           cCmd      :=""
+
+// ? oDp:lImpFisModVal,"Buscar el origen"
+// ? cCodSuc,cTipDoc,cNumero,cOption,cCmd,"<-cCmd",cCmdParam,cCmdParam2,"cCodSuc,cTipDoc,cNumero,cOption,cCmd,cCmdParam,cCmdParam2"
 
   EJECUTAR("DLL_TFHKA_DOWNLOAD") // Valida y descarga tfhkaif.dll
 
@@ -50,10 +53,14 @@ PROCE MAIN(cCodSuc,cTipDoc,cNumero,cOption,cCmd)
 
   oDp:cImpFiscalSqlPagos:=""
 
+  aData:={}
+
   /*
   // utilizado para REPORTZ o REPORTEX
   */
-  IF Empty(cCodSuc) .AND. ("Z"$cCmd .OR. "X"$cCmd .OR. "7"$cCmd .OR. "GET"$cCmd)
+  IF Empty(cCodSuc) .AND. ("Z"$cCmd .OR. "X"$cCmd .OR. "C"$cCmd .OR. "GET"$cCmd .OR. "REPORT"$cCmd .or. "CMD"$cCmd)
+
+     lSave:=.F.
 
      IF "X"$cCmd
        lError:=REPORTEX()
@@ -65,46 +72,49 @@ PROCE MAIN(cCodSuc,cTipDoc,cNumero,cOption,cCmd)
         cTipo :="REPZ"
      ENDIF
 
-     IF "7"$cCmd
+     IF "C"$cCmd
         lError:=TFHRESERT()
         cTipo :="RESE"
      ENDIF
 
      IF "GETFAV"$cCmd
-        lSave:=.F.
         DpGetNumFav()
      ENDIF
 
      IF "GETDEB"$cCmd
-        lSave:=.F.
         DpGetNumDeb()
      ENDIF
 
      IF "GETCRE"$cCmd
-        lSave:=.F.
         DpGetNumCre()
      ENDIF
 
      IF "GETTXT"$cCmd
-        lSave:=.F.
         DpGetDataFile()
      ENDIF
 
      IF "GETDATA"$cCmd
-        lSave:=.F.
         DpGetDataDin()
      ENDIF
 
+     IF "REPORT"$cCmd
+        DPREPORTTXT(cCmdParam,cCmdParam2)
+     ENDIF
+
+     IF "CMD"$cCmd
+        DpSendCmd(nStatus,nError,cCmdParam)
+     ENDIF
 
   ELSE
   
-     oDp:cImpFiscalSqlPagos:=""
+    oDp:cImpFiscalSqlPagos:=""
+    cData:=""
 
-    // Obtiene la Data del Ticket
+    // Obtiene 
     cData   :=EJECUTAR("TFHKA_DATA",cCodSuc,cTipDoc,cNumero,cOption)
     cFilePag:="temp\"+cTipDoc+cNumero+".pag"
     
-    IF .T. // JN 21/11/2023 !oDp:lImpFisModVal 
+    IF !Empty(cData) // JN 21/11/2023 !oDp:lImpFisModVal 
        aData   :=STRTRAN(cData,CRLF,CHR(10))
        aData   :=_VECTOR(aData,CHR(10))
     ENDIF
@@ -144,6 +154,8 @@ PROCE MAIN(cCodSuc,cTipDoc,cNumero,cOption,cCmd)
   IF nLinErr=1 .AND. !oDp:lImpFisRegAud
     cMsgErr:="Debe Resetear la Impresora, Error en la Primera Línea "+CRLF+cMsgErr
   ENDIF
+
+//?  lError,oDp:lImpFisRegAud,oDp:lImpFisModVal,"lError,oDp:lImpFisRegAud,oDp:lImpFisModVal"
 
   IF lError .OR. oDp:lImpFisRegAud .OR. oDp:lImpFisModVal
      cTipo:="NIMP" // ticket no impreso
@@ -226,6 +238,22 @@ FUNCTION TFH_INI(cPuerto)
 
     TDpClass():New(NIL,"oTFH")
     oTFH:cFlag21  :="" // Cantidad enteros y decimales del Precio
+    oTFH:SV       :=""
+    oTFH:cSerial  :=""
+    oTFH:cModelo  :=""
+    oTFH:aModelos :={"Z7C:HKA80"     ,;
+                     "Z7A:HKA112"    ,;
+                     "Z1A:SRP-270"   ,;
+                     "Z1B:SRP-350"   ,;
+                     "Z1E:SRP-280"   ,;
+                     "Z1F:SRP-812"   ,;
+                     "ZPA:HSP7000"   ,;
+                     "Z6A:TALLY 1125",;
+                     "Z6B:DT-230"    ,;
+                     "Z6C:TALLY 1140",;
+                     "ZYA:P3100DL"   ,;
+                     "ZZH:PP9"       ,;
+                     "ZZP:PP9-PLUS"}
 
   ENDIF
 
@@ -289,11 +317,14 @@ FUNCTION TFH_INI(cPuerto)
         cError:=TFH_ERROR(nError,!oDp:lImpFisModVal,.T.)
       ENDIF
 
+      oTFH:nError   :=nError
       oTFH:cErrorIni:=cError
 
       IF !EMPTY(cError)
+
          oTFH:lError:=.T.
          DpCloseFpctrl()
+
       ELSE
 
          oTFH:cFlag21:=DpFlag21() // Obtiene Flag21 para precios con valores enteros y decimales
@@ -301,6 +332,8 @@ FUNCTION TFH_INI(cPuerto)
       ENDIF
    
      ENDIF
+
+     DpReadFpStatus()  // Debe mostrar el Status
 
      oTFH:nErrorChk:=DpCheckFprinter()  
 
@@ -398,7 +431,9 @@ FUNCTION TFH_END()
 
   //  3/7/2025 Innecesario DpCloseFpctrl(), ejecutado en DLL_TFHK_CLOSE
 
-  oTFH:oFile:AppStr("TFH_END()"+CRLF)
+  IF ValType(oTFH:oFile)="O"
+    oTFH:oFile:AppStr("TFH_END()"+CRLF)
+  ENDIF
 
   IF !oTFH:oFile=NIL
     oTFH:oFile:Close()
@@ -452,9 +487,15 @@ FUNCTION DpGetDataDin(cFile,aCmd)
   LOCAL lError   :=1
   LOCAL cData    :=SPACE(254)
   LOCAL cFunction:="UploadStatusDin"
-  LOCAL I        :=0,cCmd
+  LOCAL I        :=0,cCmd,nAt,aS1:={},aS3:={}
 
-  DEFAULT aCmd     :={"S1","S2","S3","S2E","S21"} 
+  // DEFAULT aCmd     :={"S1","S2","S3","S4","S5","S24","S2E","S21","UOX","UOZ","SV"} 
+
+  DEFAULT aCmd     :={"S1","S2","S3"} 
+
+  IF Empty(oTFH:cModelo)
+     AADD(aCmd,"SV")
+  ENDIF
 
   oTFH:aDataTFH :={}
 
@@ -463,24 +504,58 @@ FUNCTION DpGetDataDin(cFile,aCmd)
     cFarProc:= GetProcAddress(oDp:nTFHDLL,cFunction,.T.,7,9,9,9,9) 
 
     IF ValType(oTFH:oFile)="O"
-       oTFH:oFile:AppStr("UploadStatusDin"+CLRF)
+       oTFH:oFile:AppStr("UploadStatusDin"+CRLF)
     ENDIF
 
     FOR I=1 TO LEN(aCmd)
 
        cCmd    :=aCmd[I]
        cData   :=SPACE(254)
-       uResult := CallDLL(cFarProc,lStatus,lError,cCmd,@cData) 
+       uResult :=CallDLL(cFarProc,lStatus,lError,cCmd,@cData)
 
        oTFH:SET(cCmd,cData) // Asignacion dinamica
 
        AADD(oTFH:aDataTFH,{cCmd,cData})
 
        IF ValType(oTFH:oFile)="O"
-         oTFH:oFile:AppStr(cData+CRLF)
+         oTFH:oFile:AppStr(cCmd+":"+cData+CRLF)
        ENDIF
 
+       SysRefresh(.t.)
+
     NEXT I
+
+  ENDIF
+
+  IF Empty(oTFH:cModelo)
+
+     nAt:=ASCAN(oTFH:aModelos,{|a,n| SUBS(oTFH:SV,3,3)=LEFT(a,3)})
+
+     IF nAt>0
+       oTFH:cModelo:=ALLTRIM(SUBS(oTFH:aModelos[nAt],5,50))
+     ENDIF
+
+  ENDIF
+
+  IF Empty(oTFH:cSerial)
+
+     aS1:=EJECUTAR("DLL_TFHK_S1",oTFH:S1)
+     nAt:=ASCAN(aS1,{|a,n| "Máquina:"$a[1]})
+
+     IF nAt>0
+       oTFH:cSerial:=aS1[nAt,2]
+       // Actualiza en DPSERIEFISCAL
+       SQLUPDATE("DPSERIEFISCAL",{"SFI_SERIMP","SFI_MODELO"},{oTFH:cSerial,oTFH:cModelo},"SFI_PCNAME"+GetWhere("=",oDp:cPcName))
+     ENDIF
+
+     // Agregar Flag
+
+? oTFH:S3,"oTFH:S3"
+
+     aS3:=EJECUTAR("DLL_TFHK_S3",oTFH:S3)
+
+     ViewArray(aS3)
+
 
   ENDIF
 
@@ -498,7 +573,9 @@ FUNCTION DpGetDataFile(cFunction,cCmd,cFile)
   LOCAL uResult :=NIL
   LOCAL lStatus :=1
   LOCAL lError  :=1
-  LOCAL cData   :=SPACE(254)
+  LOCAL cData   :=SPACE(254),I,cFile
+  LOCAL aCmd    :={"S1","S2","S3","S24","S2E","S21","UOX","UOZ"} 
+
 
   DEFAULT cFunction:="UploadStatusCmd",;
           cCmd     :="S1",;
@@ -509,8 +586,10 @@ FUNCTION DpGetDataFile(cFunction,cCmd,cFile)
     uResult := CallDLL(cFarProc,lStatus,lError,cCmd,cFile) 
   ENDIF
 
-  IF !oDp:lImpFisModVal
+//  IF !oDp:lImpFisModVal
 
+    // aCmd     :={"S1","S2","S3","S24","S2E","S21","UOX","UOZ"} 
+/*
     cCmd    :="S2"
     cFile   :="thefactory_"+dtos(oDp:dFecha)+"_"+cCmd+".txt"
     cFarProc:=GetProcAddress(oDp:nTFHDLL,cFunction,.T.,7,9,9,9,9) 
@@ -525,8 +604,19 @@ FUNCTION DpGetDataFile(cFunction,cCmd,cFile)
     cFile   :="thefactory_"+dtos(oDp:dFecha)+"_"+cCmd+".txt"
     cFarProc:=GetProcAddress(oDp:nTFHDLL,cFunction,.T.,7,9,9,9,9) 
     uResult :=CallDLL(cFarProc,lStatus,lError,cCmd,cFile) 
+*/
 
-  ENDIF
+    cFarProc:=GetProcAddress(oDp:nTFHDLL,cFunction,.T.,7,9,9,9,9) 
+
+    FOR I=1 TO LEN(aCmd)
+
+      cCmd    :=aCmd[I]
+      cFile   :="thefactory_"+dtos(oDp:dFecha)+"_"+cCmd+".txt"
+      uResult :=CallDLL(cFarProc,lStatus,lError,cCmd,cFile) 
+
+   NEXT I
+
+//  ENDIF
 
   IF ValType(oTFH:oFile)="O" 
     oTFH:oFile:AppStr(cFunction+",Resp->"+CTOO(uResult,"C")+CTOO(cFile,"C")+CRLF)
@@ -535,6 +625,39 @@ FUNCTION DpGetDataFile(cFunction,cCmd,cFile)
 RETURN NIL
 
 
+/*
+// Obtener Datos en archivo TXT
+// https://github.com/AdaptaProERP/MAQUINA-FISCAL-THEFACTORY/blob/main/Ejemplo_Informacion_de_Impresora_Fiscal.cpp
+// Ejecuta la emisión de papel desde la impresora, escribe en archivo y genera el mismo resultado UploadStatusDin en Memoria 
+*/
+FUNCTION DpReportTxt(cCmd,cFile)
+  LOCAL cFarProc :=NIL
+  LOCAL uResult  :=NIL
+  LOCAL lStatus  :=1
+  LOCAL lError   :=1
+  LOCAL cData    :=SPACE(254)
+  LOCAL cFunction:="UploadReportCmdSplit"
+
+  DEFAULT cCmd     :="UOX",;
+          cFile    :="temp\thefactory_"+dtos(oDp:dFecha)+"_"+lstr(seconds())+"_"+cCmd+".txt"
+
+  oDp:cFileZeta    :=cFile
+
+  IF !oDp:lImpFisModVal
+    cFarProc:= GetProcAddress(oDp:nTFHDLL,cFunction,.T.,7,9,9,9,9) 
+    uResult := CallDLL(cFarProc,lStatus,lError,cCmd,cFile) 
+  ENDIF
+
+  IF ValType(oTFH:oFile)="O" 
+    oTFH:oFile:AppStr(cFunction+",Resp->"+CTOO(uResult,"C")+CTOO(cFile,"C")+CRLF)
+
+    IF FILE(cFile)
+      oTFH:oFile:AppStr(cFile+CRLF+",Resp->"+MemoRead(cFile)+CRLF)
+    ENDIF
+
+  ENDIF
+
+RETURN NIL
 
 /*
 // Devuelve el ultimo numero de factura
@@ -600,10 +723,11 @@ FUNCTION DpGetData(cFunction,cCmd)
     uResult := CallDLL(cFarProc,lStatus,lError,cCmd,@cData) 
   ENDIF
 
+/*
   IF ValType(oTFH:oFile)="O" .AND. .F.
     oTFH:oFile:AppStr(cFunction+",Resp->"+CTOO(uResult,"C")+"cData"+CTOO(cData,"C")+CRLF)
   ENDIF
-/*
+
 
  IF !oDp:lImpFisModVal
     cCmd     :="S3"
@@ -637,13 +761,11 @@ FUNCTION DpGenFileTxt(cFunction,cCmd,cFileTxt)
   cFarProc:= GetProcAddress(oDp:nTFHDLL,cFunction,.T.,7,10,9,9 ) 
   uResult := CallDLL(cFarProc,@nStatus,@nError,@cCmd) 
 
-? uResult,"uResult",cCmd,"cCmd"
+// ? uResult,"uResult",cCmd,"cCmd"
 
   oTFH:oFile:AppStr(cFunction+",Resp->"+CTOO(uResult,"C")+CRLF)
 
 RETURN uResult
-
-
 
 
 /*
@@ -661,9 +783,28 @@ RETURN uResult
 // Lectura del estatus de la Impresora
 */
 FUNCTION DpReadFpStatus() 
-  LOCAL nStatus :=0,nError:=0
-  LOCAL cFarProc:= GetProcAddress(oDp:nTFHDLL,"ReadFpStatus",.T.,7,10 ,10 ) 
-  LOCAL uResult := CallDLL(cFarProc,@nStatus ,@nError )
+  LOCAL nStatus :=0,nError:=oTFH:nError 
+  LOCAL cFarProc:= NIL  // GetProcAddress(oDp:nTFHDLL,"ReadFpStatus",.T.,7,10 ,10 ) 
+  LOCAL uResult := NIL  // CallDLL(cFarProc,@nStatus ,@nError )
+
+// ? oDp:lImpFisModVal,"oDp:lImpFisModVal"
+
+  IF !oDp:lImpFisModVal 
+
+    cFarProc:= GetProcAddress(oDp:nTFHDLL,"ReadFpStatus",.T.,7,10 ,10 ) 
+    uResult := CallDLL(cFarProc,@nStatus ,@nError )
+
+    IF nStatus=5 .AND. nError=0
+
+       IF ValType(oTFH:oFile)="O"
+         oTFH:oFile:AppStr("Documento por Concluir, ejecute RESETEAR "+CRLF)
+       ENDIF
+
+    ENDIF
+
+  ELSE
+    nStatus :=" Modo validación Activo "
+  ENDIF
 
   oTFH:oFile:AppStr("DpReadFpStatus:"+CTOO(nStatus,"C")+", Resp->"+CTOO(uResult,"C")+CRLF)
 
@@ -682,16 +823,27 @@ FUNCTION DpSendCmd(nStatus,nError,cCmd)
 
   // 21/11/2023, modo validacion requiere la traza
 
-  IF !oDp:lImpFisModVal
+  IF !oDp:lImpFisModVal 
+
      cFarProc := GetProcAddress(oDp:nTFHDLL,"SendCmd",.T.,7,10,10,9 ) 
      uResult  := CallDLL(cFarProc,@nStatus,@nError,@cCmd ) 
+
+  ELSE
+
+    // IF ValType(oTFH:oFile)="O"
+    uResult:="Modo Validación Activo "
+    //ENDIF
+
   ENDIF
 
   oTFH:nStatus:=nStatus
   oTFH:nError :=nError
   oTFH:cCmd   :=cCmd
+  oTFH:uResult:=uResult
 
-  oTFH:oFile:AppStr("DpSendCmd: Param: nStatus->"+CTOO(nStatus,"C")+",Error->"+CTOO(nError,"C")+",cCmd->"+CTOO(cCmd,"C")+", Resp->"+CTOO(uResult,"C")+CRLF)
+  IF ValType(oTFH:oFile)="O"
+     oTFH:oFile:AppStr("DpSendCmd: Param: nStatus->"+CTOO(nStatus,"C")+",Error->"+CTOO(nError,"C")+",cCmd->"+CTOO(cCmd,"C")+", Resp->"+CTOO(uResult,"C")+CRLF)
+  ENDIF
 
 RETURN uResult
 
@@ -714,7 +866,7 @@ RETURN uResult
 // Generar Reporte X
 */
 FUNCTION REPORTEX()
-  LOCAL cIni:="I0X", nStatus, nError, cError:=""
+  LOCAL cIni:="I0X", nStatus:=0, nError:=0, cError:=""
 
   DpSendCmd(@nStatus,@nError,cIni)
 
@@ -728,7 +880,8 @@ RETURN Empty(cError)
 // Generar Reporte Z
 */
 FUNCTION REPORTEZ()
-    LOCAL cIni:="I0Z", nStatus:=NIL, nError:=NIL, cError:=""
+    // LOCAL cIni:="I0Z", nStatus:=NIL, nError:=NIL, cError:=""
+    LOCAL cIni:="I0Z", nStatus:=0, nError:=0, cError:=""
 
     DpSendCmd(@nStatus,@nError,cIni)
 

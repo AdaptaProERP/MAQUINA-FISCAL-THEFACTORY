@@ -42,8 +42,8 @@ PROCE MAIN(cS1,lMemo)
         MsgMemo("FLAG 21, no encontrado en S3")
       ELSE
         oDp:aFHK_FLAG21:=_VECTOR(aF21[nAt,2])
-        oDp:nFHK_LENENT:=oDp:aFHK_FLAG21[1]
-        oDp:nFHK_LENDEC:=oDp:aFHK_FLAG21[2]
+        oDp:nFHK_LENENT:=CTOO(oDp:aFHK_FLAG21[1],"N")
+        oDp:nFHK_LENDEC:=CTOO(oDp:aFHK_FLAG21[2],"N")
       ENDIF
 
    ENDIF

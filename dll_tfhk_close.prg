@@ -21,5 +21,9 @@ PROCE MAIN()
 
   ENDIF
 
+  oDp:aFHK_FLAG21:={}
+  oDp:nFHK_LENENT:=0 // definidas por el usuario en formulario
+  oDp:nFHK_LENDEC:=0 // 
+
 RETURN .T.
 //EOF
